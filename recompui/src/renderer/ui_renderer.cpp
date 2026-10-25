@@ -119,6 +119,13 @@ class RmlRenderInterface_RT64_impl : public Rml::RenderInterfaceCompatibility {
     static constexpr uint32_t initial_upload_buffer_size = 1024 * 1024;
     static constexpr uint32_t initial_vertex_buffer_size = 512 * sizeof(Rml::Vertex);
     static constexpr uint32_t initial_index_buffer_size = 1024 * sizeof(int);
+#ifdef __EMSCRIPTEN__
+    // An image is uploaded a band of rows at a time, at most this many bytes of them (a row if one is more). The copy
+    // buffer is sized for the largest upload yet and kept, and on WebGPU plume keeps an upload buffer's memory in the
+    // heap: whole, a launcher's SVG background drawn for a 3840x2000 canvas (10723x6032, 247 MB) kept a 371 MB copy
+    // buffer there, and a page's heap is fixed.
+    static constexpr uint32_t copy_band_size = 16 * 1024 * 1024;
+#endif
     static constexpr plume::RenderFormat RmlTextureFormat = plume::RenderFormat::R8G8B8A8_UNORM;
     static constexpr plume::RenderFormat RmlTextureFormatBgra = plume::RenderFormat::B8G8R8A8_UNORM;
     static constexpr uint32_t RmlTextureFormatBytesPerPixel = RenderFormatSize(RmlTextureFormat);
@@ -297,7 +304,7 @@ public:
 
     // Unmaps an upload buffer the CPU wrote the first `written` bytes of. On WebGPU unmap() copies what it is told was
     // written into the buffer (writeBuffer), all of it if not told: the 1 MB upload buffer at every frame, and the copy
-    // buffer, as large as the largest image yet (94 MB for a 4K launcher's background), at every image the menus load.
+    // buffer, as large as the largest band of an image's rows yet (copy_band_size), at every band the menus load.
     static void unmap_written(plume::RenderBuffer *buffer, uint64_t written) {
 #ifdef __EMSCRIPTEN__
         const plume::RenderRange range(0, written);
@@ -520,66 +527,64 @@ public:
             device_->createTexture(plume::RenderTextureDesc::Texture2D(source_dimensions.x, source_dimensions.y, 1, bgra ? RmlTextureFormatBgra : RmlTextureFormat));
 
         if (texture != nullptr) {
-            uint32_t image_size_bytes = source_dimensions.x * source_dimensions.y * RmlTextureFormatBytesPerPixel;
-
             // Calculate the texture padding for alignment purposes.
             uint32_t row_pitch = source_dimensions.x * RmlTextureFormatBytesPerPixel;
             uint32_t row_byte_width, row_byte_padding;
             CalculateTextureRowWidthPadding(row_pitch, row_byte_width, row_byte_padding);
             uint32_t row_width = row_byte_width / RmlTextureFormatBytesPerPixel;
 
-            // Calculate the real number of bytes to upload including padding.
-            uint32_t uploaded_size_bytes = row_byte_width * source_dimensions.y;
+            // The rows uploaded at a time: all of them, or with Emscripten a band of copy_band_size.
+            uint32_t band_rows = source_dimensions.y;
+#ifdef __EMSCRIPTEN__
+            band_rows = std::clamp<uint32_t>(copy_band_size / row_byte_width, 1, source_dimensions.y);
+#endif
+            for (uint32_t first_row = 0; first_row < uint32_t(source_dimensions.y); first_row += band_rows) {
+                const uint32_t rows = std::min<uint32_t>(band_rows, source_dimensions.y - first_row);
 
-            // Allocate room in the upload buffer for the uploaded data.
-            if (uploaded_size_bytes > copy_buffer_size_) {
-                copy_buffer_size_ = (uploaded_size_bytes * 3) / 2;
-                copy_buffer_ = device_->createBuffer(plume::RenderBufferDesc::UploadBuffer(copy_buffer_size_));
-            }
+                // Calculate the real number of bytes to upload including padding.
+                uint32_t uploaded_size_bytes = row_byte_width * rows;
 
-            // Copy the source data into the upload buffer.
-            uint8_t* dst_data = (uint8_t *)(copy_buffer_->map());
-            if (row_byte_padding == 0) {
-                // Copy row-by-row if the image is flipped.
-                if (flip_y) {
-                    for (int row = 0; row < source_dimensions.y; row++) {
-                        memcpy(dst_data + row_byte_width * (source_dimensions.y - row - 1), source + row_byte_width * row, row_byte_width);
+                // Allocate room in the upload buffer for the uploaded data.
+                if (uploaded_size_bytes > copy_buffer_size_) {
+                    copy_buffer_size_ = (uploaded_size_bytes * 3) / 2;
+                    copy_buffer_ = device_->createBuffer(plume::RenderBufferDesc::UploadBuffer(copy_buffer_size_));
+                }
+
+                // Copy the source data into the upload buffer.
+                uint8_t* dst_data = (uint8_t *)(copy_buffer_->map());
+                if ((row_byte_padding == 0) && !flip_y) {
+                    // Directly copy if no padding is needed and the image isn't flipped.
+                    memcpy(dst_data, source + row_pitch * first_row, row_pitch * rows);
+                }
+                // Otherwise copy row-by-row, padding each row as necessary, from the bottom up if the image is flipped.
+                else {
+                    for (uint32_t row = first_row; row < first_row + rows; row++) {
+                        const uint32_t src_row = flip_y ? (source_dimensions.y - row - 1) : row;
+                        memcpy(dst_data + row_byte_width * (row - first_row), source + row_pitch * src_row, row_pitch);
                     }
                 }
-                // Directly copy if no padding is needed and the image isn't flipped.
-                else {
-                    memcpy(dst_data, source, image_size_bytes);
+
+                unmap_written(copy_buffer_.get(), uploaded_size_bytes);
+
+                // Reset the command list.
+                copy_command_list_->begin();
+
+                // Prepare the texture to be a destination for copying.
+                if (first_row == 0) {
+                    copy_command_list_->barriers(plume::RenderBarrierStage::COPY, plume::RenderTextureBarrier(texture.get(), plume::RenderTextureLayout::COPY_DEST));
                 }
+
+                // Copy the upload buffer into the texture's rows.
+                copy_command_list_->copyTextureRegion(
+                    plume::RenderTextureCopyLocation::Subresource(texture.get()),
+                    plume::RenderTextureCopyLocation::PlacedFootprint(copy_buffer_.get(), RmlTextureFormat, source_dimensions.x, rows, 1, row_width),
+                    0, first_row, 0);
+
+                // End the command list, execute it and wait.
+                copy_command_list_->end();
+                copy_command_queue_->executeCommandLists(copy_command_list_.get(), copy_command_fence_.get());
+                copy_command_queue_->waitForCommandFence(copy_command_fence_.get());
             }
-            // Otherwise pad each row as necessary.
-            else {
-                const Rml::byte *src_data = flip_y ? source + row_pitch * (source_dimensions.y - 1) : source;
-                uint32_t src_stride = flip_y ? -row_pitch : row_pitch;
-
-                for (int row = 0; row < source_dimensions.y; row++) {
-                    memcpy(dst_data, src_data, row_pitch);
-                    src_data += src_stride;
-                    dst_data += row_byte_width;
-                }
-            }
-
-            unmap_written(copy_buffer_.get(), uploaded_size_bytes);
-
-            // Reset the command list.
-            copy_command_list_->begin();
-
-            // Prepare the texture to be a destination for copying.
-            copy_command_list_->barriers(plume::RenderBarrierStage::COPY, plume::RenderTextureBarrier(texture.get(), plume::RenderTextureLayout::COPY_DEST));
-            
-            // Copy the upload buffer into the texture.
-            copy_command_list_->copyTextureRegion(
-                plume::RenderTextureCopyLocation::Subresource(texture.get()),
-                plume::RenderTextureCopyLocation::PlacedFootprint(copy_buffer_.get(), RmlTextureFormat, source_dimensions.x, source_dimensions.y, 1, row_width));
-            
-            // End the command list, execute it and wait.
-            copy_command_list_->end();
-            copy_command_queue_->executeCommandLists(copy_command_list_.get(), copy_command_fence_.get());
-            copy_command_queue_->waitForCommandFence(copy_command_fence_.get());
 
             // Create a descriptor set with this texture in it.
             std::unique_ptr<plume::RenderDescriptorSet> set = texture_set_builder_->create(device_);
