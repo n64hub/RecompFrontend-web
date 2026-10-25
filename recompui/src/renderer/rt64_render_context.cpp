@@ -62,6 +62,20 @@ unsigned int DPC_TMEM_REG = 0;
 
 void dummy_check_interrupts() {}
 
+#if defined(__EMSCRIPTEN__)
+// With render to RAM's late copy, RT64 tells the game the RDP is done before it records and submits a list's workload,
+// so the game goes on meanwhile (ultramodern::renderer::rdp_done), once a game's task: never for a list RT64 draws by
+// itself (a pipeline warm-up, a dummy workload).
+static bool sending_game_dl = false;
+
+static void rdp_done() {
+    if (sending_game_dl) {
+        sending_game_dl = false;
+        ultramodern::renderer::rdp_done();
+    }
+}
+#endif
+
 RT64::UserConfiguration::Antialiasing compute_max_supported_aa(plume::RenderSampleCounts bits) {
     if (bits & plume::RenderSampleCount::Bits::COUNT_2) {
         if (bits & plume::RenderSampleCount::Bits::COUNT_4) {
@@ -238,6 +252,9 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
 #endif
 
     appCore.checkInterrupts = dummy_check_interrupts;
+#if defined(__EMSCRIPTEN__)
+    appCore.rdpDone = rdp_done;
+#endif
 
     appCore.HEADER = dummy_rom_header;
     appCore.RDRAM = rdram;
@@ -352,7 +369,13 @@ void renderer::RT64Context::send_dl(const OSTask* task) {
     check_texture_pack_actions();
     app->state->rsp->reset();
     app->interpreter->loadUCodeGBI(task->t.ucode & 0x3FFFFFF, task->t.ucode_data & 0x3FFFFFF, true);
+#if defined(__EMSCRIPTEN__)
+    sending_game_dl = true;
+#endif
     app->processDisplayLists(app->core.RDRAM, task->t.data_ptr & 0x3FFFFFF, 0, true);
+#if defined(__EMSCRIPTEN__)
+    sending_game_dl = false;
+#endif
     ultramodern::displaylist_read();
 }
 
