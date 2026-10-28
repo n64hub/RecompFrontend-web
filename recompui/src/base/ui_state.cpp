@@ -899,8 +899,22 @@ void deinit_hook() {
     ui_state.reset();
 }
 
+#ifdef __EMSCRIPTEN__
+// Where a page's lost WebGPU device is replaced, the menus' render interface makes what it drew with again on the new
+// one, and everything else (RmlUi, the contexts and documents, the menus open) stays as it was.
+void replace_device_hook(plume::RenderInterface* interface, plume::RenderDevice* device) {
+    std::lock_guard lock{ ui_state_mutex };
+    if (ui_state) {
+        ui_state->render_interface.replace_device(interface, device);
+    }
+}
+#endif
+
 void recompui::set_render_hooks() {
     RT64::SetRenderHooks(init_hook, draw_hook, deinit_hook);
+#ifdef __EMSCRIPTEN__
+    RT64::SetRenderHookReplaceDevice(replace_device_hook);
+#endif
 }
 
 void recompui::message_box(const char* msg) {

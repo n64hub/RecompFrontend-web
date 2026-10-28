@@ -12,6 +12,7 @@
 #include "rt64_texture_cache.h"
 
 #include "RmlUi/Core/RenderInterfaceCompatibility.h"
+#include "RmlUi/Core/Core.h"
 
 #include "ui_renderer.h"
 
@@ -179,6 +180,55 @@ class RmlRenderInterface_RT64_impl : public Rml::RenderInterfaceCompatibility {
     std::unordered_map<std::string, ImageFromBytes> image_from_bytes_map;
 public:
     RmlRenderInterface_RT64_impl(plume::RenderInterface* interface, plume::RenderDevice* device) {
+        vertex_buffer_.flags_ = plume::RenderBufferFlag::VERTEX;
+        index_buffer_.flags_ = plume::RenderBufferFlag::INDEX;
+        create_device_objects(interface, device);
+    }
+
+#ifdef __EMSCRIPTEN__
+    // Where RT64 replaces a lost WebGPU device (its replace device hook): destroys everything made on the old device,
+    // RmlUi's textures included, which it loads again as it next draws with them, and keeps the rest (the images
+    // queued from bytes, the documents).
+    void release_device_objects() {
+        Rml::ReleaseTextures(GetAdaptedInterface());
+        textures_.clear();
+        for (DynamicBuffer *dynamic_buffer : { &upload_buffer_, &vertex_buffer_, &index_buffer_ }) {
+            dynamic_buffer->buffer_.reset();
+            dynamic_buffer->size_ = 0;
+            dynamic_buffer->bytes_used_ = 0;
+            dynamic_buffer->mapped_data_ = nullptr;
+        }
+
+        stale_buffers_.clear();
+        copy_command_fence_.reset();
+        copy_command_list_.reset();
+        copy_command_queue_.reset();
+        copy_buffer_.reset();
+        copy_buffer_size_ = 0;
+        screen_vertex_buffer_.reset();
+        screen_descriptor_set_.reset();
+        screen_framebuffer_.reset();
+        screen_texture_.reset();
+        screen_texture_ms_.reset();
+        pipeline_ms_.reset();
+        pipeline_.reset();
+        layout_.reset();
+        texture_set_builder_.reset();
+        sampler_set_.reset();
+        pixel_shader_.reset();
+        vertex_shader_.reset();
+        linearSampler_.reset();
+        nearestSampler_.reset();
+        multisampling_ = plume::RenderMultisampling();
+        window_width_ = 0;
+        window_height_ = 0;
+        list_ = nullptr;
+        interface_ = nullptr;
+        device_ = nullptr;
+    }
+#endif
+
+    void create_device_objects(plume::RenderInterface* interface, plume::RenderDevice* device) {
         interface_ = interface;
         device_ = device;
         swap_chain_format_ = device->getCapabilities().preferredSwapChainFormat;
@@ -188,9 +238,6 @@ public:
         if (device_->getSampleCountsSupported(swap_chain_format_) & desired_sample_count) {
             multisampling_.sampleCount = desired_sample_count;
         }
-
-        vertex_buffer_.flags_ = plume::RenderBufferFlag::VERTEX;
-        index_buffer_.flags_ = plume::RenderBufferFlag::INDEX;
 
         // Create the texture upload buffer, vertex buffer and index buffer
         resize_dynamic_buffer(upload_buffer_, initial_upload_buffer_size, false);
@@ -727,6 +774,19 @@ void recompui::RmlRenderInterface_RT64::reset() {
 void recompui::RmlRenderInterface_RT64::init(plume::RenderInterface* interface, plume::RenderDevice* device) {
     impl = std::make_unique<RmlRenderInterface_RT64_impl>(interface, device);
 }
+
+#ifdef __EMSCRIPTEN__
+void recompui::RmlRenderInterface_RT64::replace_device(plume::RenderInterface* interface, plume::RenderDevice* device) {
+    assert(static_cast<bool>(impl));
+
+    if (device == nullptr) {
+        impl->release_device_objects();
+    }
+    else {
+        impl->create_device_objects(interface, device);
+    }
+}
+#endif
 
 Rml::RenderInterface* recompui::RmlRenderInterface_RT64::get_rml_interface() {
     if (impl) {

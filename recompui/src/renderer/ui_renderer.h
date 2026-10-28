@@ -26,6 +26,11 @@ namespace recompui {
         ~RmlRenderInterface_RT64();
         void reset();
         void init(plume::RenderInterface* interface, plume::RenderDevice* device);
+#ifdef __EMSCRIPTEN__
+        // With nullptrs, destroys what was made on the device, and with a new device, makes it again on that one: RT64's
+        // replace device hook, where a page's lost WebGPU device is replaced.
+        void replace_device(plume::RenderInterface* interface, plume::RenderDevice* device);
+#endif
         Rml::RenderInterface* get_rml_interface();
         
         void start(plume::RenderCommandList* list, int image_width, int image_height);
