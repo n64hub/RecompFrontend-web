@@ -74,7 +74,15 @@ size_t players::get_max_number_of_players() {
 }
 
 bool players::is_single_player_mode() {
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+    // Until players are assigned a multiplayer game plays as single-player mode: every controller and the keyboard are
+    // player 1, with the single-player profiles, and the controls page shows them with its Assign players button
+    // (get_max_number_of_players stays the game's). Upstream's port 1 had only the keyboard then, and no controller
+    // reached the game until one was assigned: a game played alone needed the assignment first, a pad on its own too.
+    return PlayerState.single_player_mode || PlayerState.players.get_count() == 0;
+#else
     return PlayerState.single_player_mode;
+#endif
 }
 
 void players::set_single_player_mode(bool single_player) {
@@ -153,6 +161,9 @@ void playerassignment::commit_player_assignment() {
     stop_and_close_modal();
 
     PlayerState.players = PlayerState.temp_players;
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+    bool sp_keyboard_taken = false;
+#endif
     for (int i = 0; i < players::get_number_of_assigned_players(); i++) {
         Player &player = PlayerState.players[i];
         if (player.controller != nullptr) {
@@ -161,6 +172,15 @@ void playerassignment::commit_player_assignment() {
                 profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
             }
         } else {
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+            // The first keyboard player plays with the keys single-player mode has, where upstream gave them a new profile
+            // with no keys bound. Any other gets one of those, to bind keys of their own.
+            if (!sp_keyboard_taken) {
+                sp_keyboard_taken = true;
+                profiles::set_input_profile_for_player(i, profiles::get_sp_keyboard_profile_index(), InputDevice::Keyboard);
+                continue;
+            }
+#endif
             profiles::set_input_profile_for_player(i, profiles::get_or_create_mp_keyboard_profile_index(i), InputDevice::Keyboard);
         }
     }

@@ -399,6 +399,20 @@ namespace recompinput {
             
             int profile_index_cont = players::is_single_player_mode() ? profiles::get_sp_controller_profile_index() : players_input_profile_indices[player_index].first;
             int profile_index_kb = players::is_single_player_mode() ? profiles::get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second;
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+            // An assigned player reads only the device they were assigned. Upstream read both of a player's profiles, and
+            // a controller player's keyboard one was still player 1's single-player keys (or profile 0, those same keys,
+            // for players 2-4), so the keyboard played every controller player at once.
+            if (!players::is_single_player_mode()) {
+                InputDevice device = players::get_player_input_device(player_index);
+                if (device != InputDevice::Controller) {
+                    profile_index_cont = -1;
+                }
+                if (device != InputDevice::Keyboard) {
+                    profile_index_kb = -1;
+                }
+            }
+#endif
             check_buttons(profile_index_cont);
             check_buttons(profile_index_kb);
 

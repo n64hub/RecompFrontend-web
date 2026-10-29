@@ -185,6 +185,7 @@ private:
 
     void set_current_profile_index();
 
+    void update_multiplayer_enabled();
     void render_all();
 
     void render_header();

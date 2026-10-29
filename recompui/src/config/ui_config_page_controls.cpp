@@ -170,9 +170,7 @@ void GameInputRow::focus_on_first_binding() {
 ConfigPageControls::ConfigPageControls(ResourceId rid, Element *parent) : ConfigPage(rid, parent) {
     controls_page = this;
 
-    multiplayer_enabled = recompinput::players::is_single_player_mode() == false;
-    this->max_num_players = multiplayer_enabled ? recompinput::players::get_max_number_of_players() : 1;
-    multiplayer_view_mappings = !multiplayer_enabled;
+    update_multiplayer_enabled();
 
     set_selected_player(selected_player);
 
@@ -240,7 +238,19 @@ void ConfigPageControls::force_update() {
     update_index++;
 }
 
+// Single-player mode can change while the page exists: a game that plays as it until players are assigned
+// (recompinput's RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED) leaves it when they are.
+void ConfigPageControls::update_multiplayer_enabled() {
+    multiplayer_enabled = recompinput::players::is_single_player_mode() == false;
+    this->max_num_players = multiplayer_enabled ? recompinput::players::get_max_number_of_players() : 1;
+    multiplayer_view_mappings = !multiplayer_enabled;
+}
+
 void ConfigPageControls::render_all() {
+    if (multiplayer_enabled != !recompinput::players::is_single_player_mode()) {
+        update_multiplayer_enabled();
+        selected_player = 0;
+    }
     render_header();
     render_body();
     render_footer();
@@ -259,10 +269,14 @@ static void show_or_hide_if_exists(Element* element, bool show) {
 void ConfigPageControls::render_header() {
     // Header attempts to not re-render elements if not necessary, instead swapping visibility / updating text.
 
-    if (!multiplayer_enabled) {
+    // A game that allows more players shows Assign players in single-player mode too.
+    bool can_assign_players = recompinput::players::get_max_number_of_players() > 1;
+    if (!multiplayer_enabled && !can_assign_players) {
         hide_header();
         return;
     }
+    // The player cards show the header's Assign players, editing a player's profile its Go back.
+    bool editing_profile = multiplayer_enabled && multiplayer_view_mappings;
 
     recompui::ContextId context = get_current_context();
     add_header();
@@ -272,7 +286,7 @@ void ConfigPageControls::render_header() {
     {
         auto header_left = header->get_left();
 
-        if (multiplayer_view_mappings) {
+        if (editing_profile) {
             std::string profile_name = "Editing: " + recompinput::profiles::get_input_profile_name(selected_profile_index);
             if (header_elements.left.profile_name_label == nullptr) {
                 header_elements.left.profile_name_label = context.create_element<Label>(
@@ -295,7 +309,7 @@ void ConfigPageControls::render_header() {
     {
         auto header_right = header->get_right();
 
-        if (multiplayer_view_mappings) {
+        if (editing_profile) {
             if (header_elements.right.go_back_button == nullptr) {
                 header_elements.right.go_back_button = context.create_element<Button>(header_right, "Go back", ButtonStyle::Tertiary);
                 header_elements.right.go_back_button->add_pressed_callback([this]() {

@@ -149,7 +149,9 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         
         ControllerGUID guid = profiles::get_guid_from_sdl_controller(controller);
         if (profiles::get_controller_by_guid(guid) < 0) {
-            if (players::is_single_player_mode()) {
+            // A game that allows more players makes a controller's profile at once, as the controls page's player
+            // cards list them, though it may play as single-player mode until players are assigned (players.cpp).
+            if (players::get_max_number_of_players() == 1) {
                 deferred_controller_profiles[guid.hash] = guid;
             } else {
                 int profile_index = get_or_create_controller_profile_index(guid);
