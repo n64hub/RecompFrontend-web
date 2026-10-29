@@ -161,9 +161,6 @@ void playerassignment::commit_player_assignment() {
     stop_and_close_modal();
 
     PlayerState.players = PlayerState.temp_players;
-#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
-    bool sp_keyboard_taken = false;
-#endif
     for (int i = 0; i < players::get_number_of_assigned_players(); i++) {
         Player &player = PlayerState.players[i];
         if (player.controller != nullptr) {
@@ -172,15 +169,6 @@ void playerassignment::commit_player_assignment() {
                 profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
             }
         } else {
-#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
-            // The first keyboard player plays with the keys single-player mode has, where upstream gave them a new profile
-            // with no keys bound. Any other gets one of those, to bind keys of their own.
-            if (!sp_keyboard_taken) {
-                sp_keyboard_taken = true;
-                profiles::set_input_profile_for_player(i, profiles::get_sp_keyboard_profile_index(), InputDevice::Keyboard);
-                continue;
-            }
-#endif
             profiles::set_input_profile_for_player(i, profiles::get_or_create_mp_keyboard_profile_index(i), InputDevice::Keyboard);
         }
     }

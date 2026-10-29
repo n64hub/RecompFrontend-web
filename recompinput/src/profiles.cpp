@@ -206,6 +206,27 @@ namespace recompinput {
             break;
         case InputDevice::Keyboard:
             players_input_profile_indices[player_index].second = profile_index;
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+            // A keyboard player's own profile with no keys bound (upstream makes a new one with none) gets single-player
+            // mode's, which they played with until players were assigned.
+            if (profile_index >= 0 && profile_index == get_mp_keyboard_profile_index(player_index)) {
+                int sp_profile_index = get_sp_keyboard_profile_index();
+                bool bound = false;
+                for (size_t input = 0; input < static_cast<size_t>(GameInput::COUNT); input++) {
+                    for (size_t binding_index = 0; binding_index < num_bindings_per_input; binding_index++) {
+                        bound |= get_input_binding(profile_index, static_cast<GameInput>(input), binding_index) != InputField{};
+                    }
+                }
+                if (!bound && sp_profile_index >= 0) {
+                    for (size_t input = 0; input < static_cast<size_t>(GameInput::COUNT); input++) {
+                        for (size_t binding_index = 0; binding_index < num_bindings_per_input; binding_index++) {
+                            set_input_binding(profile_index, static_cast<GameInput>(input), binding_index,
+                                get_input_binding(sp_profile_index, static_cast<GameInput>(input), binding_index));
+                        }
+                    }
+                }
+            }
+#endif
             break;
         default:
             assert(false && "Unknown input device.");
@@ -371,6 +392,33 @@ namespace recompinput {
         return "SERIAL_" + guid.serial + "_VID_" + std::to_string(guid.vendor) + "_PID_" + std::to_string(guid.product) +"_VERSION_" + std::to_string(guid.version) +"_CRC16_" + std::to_string(guid.crc16);
     }
 
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+    // Whether a player reads one of their two profiles: a keyboard player reads no controller, and a controller player
+    // no keyboard, but player 1 while nobody has it. Every player starts out on single-player mode's keys (profile 0,
+    // the same keys, for players 2-4, in both of their slots), so upstream's keyboard played every controller player.
+    static bool player_reads_profile(int player_index, int profile_index) {
+        if (players::is_single_player_mode()) {
+            return true;
+        }
+        InputDevice device = players::get_player_input_device(player_index);
+        if (input_profiles[profile_index].device != InputDevice::Keyboard) {
+            return device == InputDevice::Controller;
+        }
+        if (profile_index != players_input_profile_indices[player_index].second) {
+            return false;
+        }
+        if (device == InputDevice::Keyboard) {
+            return true;
+        }
+        for (size_t i = 0; i < players::get_number_of_assigned_players(); i++) {
+            if (players::get_player_input_device((int)i) == InputDevice::Keyboard) {
+                return false;
+            }
+        }
+        return player_index == 0;
+    }
+#endif
+
     bool profiles::get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out) {
         uint16_t cur_buttons = 0;
         float cur_x = 0.0f;
@@ -380,6 +428,11 @@ namespace recompinput {
                 if (profile_index < 0) {
                     return;
                 }
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+                if (!player_reads_profile(player_index, profile_index)) {
+                    return;
+                }
+#endif
 
                 const input_mapping_array &mappings = input_profiles[profile_index].mappings;
                 for (size_t i = 0; i < n64_button_values.size(); i++) {
@@ -391,6 +444,11 @@ namespace recompinput {
                 if (profile_index < 0) {
                     return;
                 }
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+                if (!player_reads_profile(player_index, profile_index)) {
+                    return;
+                }
+#endif
 
                 const input_mapping_array &mappings = input_profiles[profile_index].mappings;
                 cur_x += recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::X_AXIS_POS]) - recompinput::get_input_analog(player_index, mappings[(size_t)GameInput::X_AXIS_NEG]);
@@ -399,20 +457,6 @@ namespace recompinput {
             
             int profile_index_cont = players::is_single_player_mode() ? profiles::get_sp_controller_profile_index() : players_input_profile_indices[player_index].first;
             int profile_index_kb = players::is_single_player_mode() ? profiles::get_sp_keyboard_profile_index() : players_input_profile_indices[player_index].second;
-#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
-            // An assigned player reads only the device they were assigned. Upstream read both of a player's profiles, and
-            // a controller player's keyboard one was still player 1's single-player keys (or profile 0, those same keys,
-            // for players 2-4), so the keyboard played every controller player at once.
-            if (!players::is_single_player_mode()) {
-                InputDevice device = players::get_player_input_device(player_index);
-                if (device != InputDevice::Controller) {
-                    profile_index_cont = -1;
-                }
-                if (device != InputDevice::Keyboard) {
-                    profile_index_kb = -1;
-                }
-            }
-#endif
             check_buttons(profile_index_cont);
             check_buttons(profile_index_kb);
 
