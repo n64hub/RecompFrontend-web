@@ -398,7 +398,12 @@ namespace recompinput {
     // the same keys, for players 2-4, in both of their slots), so upstream's keyboard played every controller player.
     static bool player_reads_profile(int player_index, int profile_index) {
         if (players::is_single_player_mode()) {
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+            // Each port its own controller (input_state.cpp), and the keyboard port 1.
+            return input_profiles[profile_index].device != InputDevice::Keyboard || player_index == 0;
+#else
             return true;
+#endif
         }
         InputDevice device = players::get_player_input_device(player_index);
         if (input_profiles[profile_index].device != InputDevice::Keyboard) {

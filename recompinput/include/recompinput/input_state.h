@@ -28,6 +28,10 @@ namespace recompinput {
     };
 
     void poll_inputs();
+    // How many controllers are connected. With RECOMPINPUT_PADS_IN_ORDER, until players are assigned, the first plays
+    // port 1, the second port 2 and so on (input_state.cpp): a game's get_connected_device_info tells it those ports
+    // and port 1, the keyboard's, have a controller.
+    size_t get_detected_controller_count();
     void set_rumble(int controller_num, bool on);
     void update_rumble();
     bool should_override_keystate(SDL_Scancode key, SDL_Keymod mod);

@@ -31,6 +31,25 @@ static struct {
     InputArray<bool> rumble_active{};
 } InputState;
 
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+// RECOMPINPUT_PADS_IN_ORDER, for a game of several players: until players are assigned, each controller plays a port of
+// its own, in the order they were connected (poll_inputs), where single-player mode gives every controller to every
+// port, so a second pad moved player 1 too and a menu that each player works with a pad of their own (a character
+// select) had every cursor move at once. Its buttons, sticks, gyro and rumble are that port's alone; the keyboard plays
+// port 1 (profiles.cpp). Assigned players play as before. The caller holds controllers_mutex.
+static SDL_GameController* controller_for_port(int controller_num) {
+    if (controller_num < 0 || (size_t)controller_num >= InputState.detected_controllers.size()) {
+        return nullptr;
+    }
+    return InputState.detected_controllers[controller_num];
+}
+#endif
+
+size_t recompinput::get_detected_controller_count() {
+    std::lock_guard lock{ InputState.controllers_mutex };
+    return InputState.detected_controllers.size();
+}
+
 void recompinput::poll_inputs() {
     InputState.keys = SDL_GetKeyboardState(&InputState.numkeys);
     InputState.keymod = SDL_GetModState();
@@ -51,6 +70,14 @@ void recompinput::poll_inputs() {
                 InputState.detected_controllers.push_back(controller);
             }
         }
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+        // In the order they were connected: SDL's joystick instance ids rise with each connection.
+        std::sort(InputState.detected_controllers.begin(), InputState.detected_controllers.end(),
+            [](SDL_GameController* a, SDL_GameController* b) {
+                return SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(a)) <
+                    SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(b));
+            });
+#endif
     }
 
     // Read the deltas while resetting them to zero.
@@ -164,6 +191,11 @@ void recompinput::update_rumble() {
         return;
     }
     size_t rumbles_to_run = recompinput::players::is_single_player_mode() ? 1 : recompinput::players::get_number_of_assigned_players();
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+    if (recompinput::players::is_single_player_mode()) {
+        rumbles_to_run = recompinput::get_detected_controller_count();
+    }
+#endif
     if (rumbles_to_run > InputState.cur_rumble.size()) {
         rumbles_to_run = InputState.cur_rumble.size();
     }
@@ -185,9 +217,15 @@ void recompinput::update_rumble() {
         {
             std::lock_guard lock{ InputState.controllers_mutex };
             if (recompinput::players::is_single_player_mode()) {
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+                if (SDL_GameController* controller = controller_for_port((int)i)) {
+                    do_rumble(controller, rumble_strength, duration);
+                }
+#else
                 for (const auto &controller : InputState.detected_controllers) {
                     do_rumble(controller, rumble_strength, duration);
                 }
+#endif
             }
             else {
                 auto &player = recompinput::players::get_player(i);
@@ -206,9 +244,15 @@ bool controller_button_state(int controller_num, int32_t input_id) {
         {
             std::lock_guard lock{ InputState.controllers_mutex };
             if (recompinput::players::is_single_player_mode()) {
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+                if (SDL_GameController* controller = controller_for_port(controller_num)) {
+                    ret |= SDL_GameControllerGetButton(controller, button);
+                }
+#else
                 for (const auto &controller : InputState.detected_controllers) {
                     ret |= SDL_GameControllerGetButton(controller, button);
                 }
+#endif
             }
             else {
                 auto &player = recompinput::players::get_player(controller_num);
@@ -249,12 +293,18 @@ float controller_axis_state(int controller_num, int32_t input_id, bool allow_sup
 
             std::lock_guard lock{ InputState.controllers_mutex };
             if (recompinput::players::is_single_player_mode()) {
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+                if (SDL_GameController* controller = controller_for_port(controller_num)) {
+                    ret = gather_axis_state(controller);
+                }
+#else
                 for (SDL_GameController *controller : InputState.detected_controllers) {
                     float controller_state = gather_axis_state(controller);
                     if (fabsf(controller_state) > fabsf(ret)) {
                         ret = controller_state;
                     }
                 }
+#endif
             }
             else {
                 auto &player = recompinput::players::get_player(controller_num);
@@ -348,11 +398,17 @@ void recompinput::get_gyro_deltas(int controller_num, float* x, float* y) {
     if (players::is_single_player_mode()) {
         {
             std::lock_guard lock{ InputState.controllers_mutex };
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+            if (SDL_GameController* controller = controller_for_port(controller_num)) {
+                cur_rotation_delta = InputState.controller_states[SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))].rotation_delta;
+            }
+#else
             for (const auto &state_pair : InputState.controller_states) {
                 const ControllerState &state = state_pair.second;
                 cur_rotation_delta[0] += state.rotation_delta[0];
                 cur_rotation_delta[1] += state.rotation_delta[1];
             }
+#endif
         }
 
     } else {

@@ -67,3 +67,13 @@ option(RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED "A multiplayer game plays as sin
 if (RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED OR EMSCRIPTEN)
     target_compile_definitions(recompinput PRIVATE RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED=1)
 endif()
+
+# And with this one each controller plays a port of its own until then, in the order they were connected, and the
+# keyboard port 1 (src/input_state.cpp, controller_for_port): up to four people play with no setup. It turns the option
+# above on too. Off with Emscripten as well: a game of several players turns it on (set(RECOMPINPUT_PADS_IN_ORDER ON
+# CACHE BOOL "" FORCE) before add_subdirectory) and tells the game which ports have a pad to match
+# (get_detected_controller_count, in its get_connected_device_info).
+option(RECOMPINPUT_PADS_IN_ORDER "A multiplayer game plays each controller as a port of its own, in the order they were connected, and the keyboard as port 1, until players are assigned" OFF)
+if (RECOMPINPUT_PADS_IN_ORDER)
+    target_compile_definitions(recompinput PRIVATE RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED=1 RECOMPINPUT_PADS_IN_ORDER=1)
+endif()
