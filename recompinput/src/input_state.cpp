@@ -45,9 +45,19 @@ static SDL_GameController* controller_for_port(int controller_num) {
 }
 #endif
 
+// The controllers SDL's events have opened, not detected_controllers, which only poll_inputs fills: a game asks which
+// ports have a controller (osContInit) as it boots, before its first read of them, and the count there was 0, so a
+// game that counts its players once at boot offered one whatever was plugged in.
 size_t recompinput::get_detected_controller_count() {
     std::lock_guard lock{ InputState.controllers_mutex };
-    return InputState.detected_controllers.size();
+    size_t count = 0;
+    for (const auto& [id, state] : InputState.controller_states) {
+        (void)id;
+        if (state.controller != nullptr) {
+            count++;
+        }
+    }
+    return count;
 }
 
 void recompinput::poll_inputs() {
