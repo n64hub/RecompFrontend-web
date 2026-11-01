@@ -7,6 +7,7 @@
 
 #ifdef __EMSCRIPTEN__
 #include <atomic>
+#include <vector>
 #include <emscripten/html5.h>
 #endif
 
@@ -82,7 +83,16 @@ static void web_watch_pointer_lock() {
             web_next_filter = nullptr;
             web_next_filter_userdata = nullptr;
         }
+        // SDL_SetEventFilter drops every event still queued, and this runs before the first is read: among them the
+        // SDL_CONTROLLERDEVICEADDED SDL_Init queues for each gamepad already there (one pressed as the page loads), which
+        // was then never opened. So they are taken out first and queued again after.
+        int count = SDL_PeepEvents(nullptr, 0, SDL_PEEKEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
+        std::vector<SDL_Event> queued(count > 0 ? count : 0);
+        count = queued.empty() ? 0 : SDL_PeepEvents(queued.data(), int(queued.size()), SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
         SDL_SetEventFilter(web_mouse_filter, nullptr);
+        if (count > 0) {
+            SDL_PeepEvents(queued.data(), count, SDL_ADDEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
+        }
     }
 
     // Relative mode is still on only if the lock ended without this side turning it off (a menu opened another way).
