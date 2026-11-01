@@ -62,7 +62,9 @@ target_link_libraries(recompinput PUBLIC)
 
 # A game that turns single-player mode off (set_single_player_mode(false)) plays as single-player mode does, every
 # controller and the keyboard as player 1, until players are assigned (src/players.cpp, is_single_player_mode), and an
-# assigned player then reads only their own device (src/profiles.cpp, get_n64_input).
+# assigned player then reads only their own device (src/profiles.cpp, get_n64_input). The first keyboard player's Reset
+# to defaults gives them the default keys, and the controls page shows the keyboard's keys of a player 1 on a controller
+# who still has it (src/profiles.cpp, reset_profile_bindings and controller_player_has_keyboard).
 option(RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED "A multiplayer game plays as single-player mode until players are assigned; then the keyboard plays only its player, or player 1 while nobody has it (always on with Emscripten)" OFF)
 if (RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED OR EMSCRIPTEN)
     target_compile_definitions(recompinput PRIVATE RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED=1)

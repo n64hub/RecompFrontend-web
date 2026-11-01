@@ -47,6 +47,9 @@ namespace recompinput {
         const std::vector<int> get_indices_for_custom_profiles(InputDevice device);
         void set_input_profile_for_player(int player_index, int profile_index, InputDevice device);
         int get_input_profile_for_player(int player_index, InputDevice device);
+        // Whether a controller player also plays the keyboard, on their keyboard profile: with
+        // RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED, player 1 while nobody has been given it. Otherwise never.
+        bool controller_player_has_keyboard(int player_index);
         int add_controller(ControllerGUID guid, int profile_index);
         const ControllerGUID &get_controller_guid(int controller_index);
         int get_controller_profile_index(int controller_index);

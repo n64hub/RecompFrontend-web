@@ -465,6 +465,7 @@ void ConfigPageControls::on_select_player_profile(int player_index, int profile_
 
 void ConfigPageControls::on_edit_player_profile(int player_index) {
     selected_player = player_index;
+    single_player_show_keyboard_mappings = false;
     recompinput::InputDevice device = recompinput::players::get_player_input_device(player_index);
     if (device != recompinput::InputDevice::COUNT) {
         selected_profile_index = recompinput::profiles::get_input_profile_for_player(player_index, device);
@@ -487,11 +488,18 @@ void ConfigPageControls::render_footer() {
     {
         auto footer_left = footer->get_left();
         footer_left->clear_children();
-        if (!multiplayer_enabled) {
+        // The toggle shows too for a controller player who also has the keyboard (recompinput's
+        // controller_player_has_keyboard), whose keyboard keys could otherwise not be seen or changed.
+        if (!multiplayer_enabled || recompinput::profiles::controller_player_has_keyboard(selected_player)) {
             keyboard_toggle = context.create_element<IconToggle>(footer_left, "icons/Cont.svg", "icons/Keyboard.svg", ToggleSize::Large);
             keyboard_toggle->set_checked(single_player_show_keyboard_mappings);
             keyboard_toggle->add_checked_callback([this](bool checked) {
                 this->single_player_show_keyboard_mappings = checked;
+                if (this->multiplayer_enabled) {
+                    this->selected_profile_index = recompinput::profiles::get_input_profile_for_player(
+                        this->selected_player, this->get_player_input_device());
+                    this->force_update();
+                }
                 this->update_control_mappings();
             });
         }
@@ -644,6 +652,9 @@ void ConfigPageControls::update_control_mappings() {
 
 recompinput::InputDevice ConfigPageControls::get_player_input_device() {
     if (multiplayer_enabled) {
+        if (single_player_show_keyboard_mappings && recompinput::profiles::controller_player_has_keyboard(this->selected_player)) {
+            return recompinput::InputDevice::Keyboard;
+        }
         return recompinput::players::get_player_input_device(this->selected_player);
     }
 

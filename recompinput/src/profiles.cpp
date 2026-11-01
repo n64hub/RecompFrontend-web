@@ -93,13 +93,33 @@ namespace recompinput {
         return profiles::get_input_profile_by_key(profiles::get_mp_keyboard_profile_key(player_index));
     }
 
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+    // Whether a player is the first one, in player order, assigned the keyboard. Assign players gives the keyboard to more
+    // players with the button it shows once one has it, and they share it, so only the first one's own profile starts from
+    // single-player mode's keys and resets to the defaults: a later one's starts with none, as upstream's does.
+    static bool is_first_keyboard_player(int player_index) {
+        for (int i = 0; i < player_index; i++) {
+            if (players::get_player_input_device(i) == InputDevice::Keyboard) {
+                return false;
+            }
+        }
+        return players::get_player_input_device(player_index) == InputDevice::Keyboard;
+    }
+#endif
+
     void profiles::reset_profile_bindings(int profile_index, InputDevice device) {
         // multiplayer keyboard profiles just get cleared completely because of overlapping key bindings.
         bool is_multiplayer_kb = false;
         if (device == InputDevice::Keyboard) {
             for (size_t i = 0; i < recompinput::players::get_number_of_assigned_players(); i++) {
                 if (get_mp_keyboard_profile_index(i) == profile_index) {
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+                    // But the first keyboard player's gets the default keys, which no other player's overlap: cleared,
+                    // the only player on the keyboard had no keys at all.
+                    is_multiplayer_kb = !is_first_keyboard_player((int)i);
+#else
                     is_multiplayer_kb = true;
+#endif
                     break;
                 }
             }
@@ -207,9 +227,10 @@ namespace recompinput {
         case InputDevice::Keyboard:
             players_input_profile_indices[player_index].second = profile_index;
 #ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
-            // A keyboard player's own profile with no keys bound (upstream makes a new one with none) gets single-player
-            // mode's, which they played with until players were assigned.
-            if (profile_index >= 0 && profile_index == get_mp_keyboard_profile_index(player_index)) {
+            // The first keyboard player's own profile with no keys bound (upstream makes a new one with none) gets
+            // single-player mode's, which they played with until players were assigned.
+            if (profile_index >= 0 && profile_index == get_mp_keyboard_profile_index(player_index) &&
+                is_first_keyboard_player(player_index)) {
                 int sp_profile_index = get_sp_keyboard_profile_index();
                 bool bound = false;
                 for (size_t input = 0; input < static_cast<size_t>(GameInput::COUNT); input++) {
@@ -423,6 +444,18 @@ namespace recompinput {
         return player_index == 0;
     }
 #endif
+
+    bool profiles::controller_player_has_keyboard(int player_index) {
+#ifdef RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED
+        if (players::is_single_player_mode() || players::get_player_input_device(player_index) != InputDevice::Controller) {
+            return false;
+        }
+        int profile_index = players_input_profile_indices[player_index].second;
+        return profile_index >= 0 && player_reads_profile(player_index, profile_index);
+#else
+        return false;
+#endif
+    }
 
     bool profiles::get_n64_input(int player_index, uint16_t* buttons_out, float* x_out, float* y_out) {
         uint16_t cur_buttons = 0;
