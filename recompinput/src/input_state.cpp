@@ -107,38 +107,70 @@ void recompinput::poll_inputs() {
 
 #ifdef __EMSCRIPTEN__
 #include <chrono>
-#include <string>
+#include <cstring>
 #include <emscripten.h>
+#include <emscripten/html5.h>
 #include <emscripten/threading.h>
 
 // Emscripten's SDL2 has no rumble (SDL_JoystickRumble is unsupported there), so on a page it goes to the browser's
 // Gamepad API, on the main thread where that is: vibrationActuator.playEffect("dual-rumble") on the gamepad behind
-// the joystick, its weak (high frequency) motor as SDL_JoystickRumble's is driven. SDL names a browser gamepad after
-// its id with the spaces tidied, so the gamepad is the k-th whose id reads as the joystick's name, for the k-th
-// joystick of that name in the order SDL saw them connect (instance id).
-EM_JS(void, recompinput_web_rumble, (const char *name_ptr, int rank, int strength), {
-    const tidy = (s) => s.replace(/\s+/g, ' ').trim();
-    const name = tidy(UTF8ToString(name_ptr));
-    for (const pad of navigator.getGamepads ? navigator.getGamepads() : []) {
-        if (!pad || tidy(pad.id) !== name || rank-- > 0) {
-            continue;
-        }
-        const actuator = pad.vibrationActuator;
-        if (actuator && strength > 0) {
-            actuator.playEffect('dual-rumble', { duration: 5000, strongMagnitude: 0, weakMagnitude: strength / 65535 })
-                .catch(() => {});
-        } else if (actuator) {
-            actuator.reset().catch(() => {});
-        }
-        return;
+// the joystick, its weak (high frequency) motor as SDL_JoystickRumble's is driven.
+EM_JS(void, recompinput_web_rumble, (int index, int strength), {
+    const pad = navigator.getGamepads ? navigator.getGamepads()[index] : null;
+    const actuator = pad && pad.vibrationActuator;
+    if (actuator && strength > 0) {
+        actuator.playEffect('dual-rumble', { duration: 5000, strongMagnitude: 0, weakMagnitude: strength / 65535 })
+            .catch(() => {});
+    } else if (actuator) {
+        actuator.reset().catch(() => {});
     }
 });
 
+// SDL's own, which names a joystick on Emscripten: SDL_CreateJoystickName(0, 0, NULL, id) of the browser gamepad's id.
+extern "C" char *SDL_CreateJoystickName(Uint16 vendor, Uint16 product, const char *vendor_name, const char *product_name);
+
+// The browser's index of the gamepad behind a joystick, or -1. SDL keeps it to itself, and its name for the joystick
+// isn't the gamepad's id: the id comes through Emscripten's EmscriptenGamepadEvent cut to 63 bytes, which Chrome's ids
+// for other than XInput pads run past ("DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)"),
+// and SDL renames it (a maker's name shortened, "HORI CO.,LTD" to "HORI", or cut off the front when it shows again
+// later). So each gamepad's id as Emscripten gives it is named the way SDL named the joystick, and the gamepad is the
+// k-th of that name in the browser's order, for the k-th joystick of the name in the order SDL saw them connect
+// (instance id).
+static int web_gamepad_index(SDL_Joystick* joystick) {
+    const char *name = SDL_JoystickName(joystick);
+    SDL_JoystickID id = SDL_JoystickInstanceID(joystick);
+    if (name == nullptr) {
+        return -1;
+    }
+    if (emscripten_sample_gamepad_data() != EMSCRIPTEN_RESULT_SUCCESS) {
+        return -1;
+    }
+    int rank = 0;
+    for (int i = 0; i < SDL_NumJoysticks(); i++) {
+        const char *other = SDL_JoystickNameForIndex(i);
+        rank += SDL_JoystickGetDeviceInstanceID(i) < id && other != nullptr && strcmp(other, name) == 0;
+    }
+    EmscriptenGamepadEvent pad;
+    for (int i = 0; i < emscripten_get_num_gamepads(); i++) {
+        if (emscripten_get_gamepad_status(i, &pad) != EMSCRIPTEN_RESULT_SUCCESS) {
+            continue;
+        }
+        char *pad_name = SDL_CreateJoystickName(0, 0, nullptr, pad.id);
+        bool same = pad_name != nullptr && strcmp(pad_name, name) == 0;
+        SDL_free(pad_name);
+        if (same && rank-- == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 // Called every retrace for every pad. Only a change of strength goes to the page, and, since a browser ends an effect
-// after 5 seconds at most, a rumble still on once a second.
+// after 5 seconds at most, a rumble still on once a second. The gamepad is found as the joystick is first rumbled (a
+// reset, as it is opened) and kept: a browser's index for a gamepad stays while it is connected.
 static int web_rumble(SDL_Joystick* joystick, uint16_t strength) {
     struct Played {
-        std::string name; // the page reads it after this returns, so it stays here
+        int index = -1;
         uint16_t strength = 0;
         std::chrono::steady_clock::time_point at;
     };
@@ -150,18 +182,14 @@ static int web_rumble(SDL_Joystick* joystick, uint16_t strength) {
     if (!added && strength == p.strength && (strength == 0 || now - p.at < std::chrono::seconds(1))) {
         return 0;
     }
-    if (added) {
-        const char *name = SDL_JoystickName(joystick);
-        p.name = name ? name : "";
-    }
     p.strength = strength;
     p.at = now;
-    int rank = 0;
-    for (int i = 0; i < SDL_NumJoysticks(); i++) {
-        const char *name = SDL_JoystickNameForIndex(i);
-        rank += SDL_JoystickGetDeviceInstanceID(i) < id && p.name == (name ? name : "");
+    if (p.index < 0) {
+        p.index = web_gamepad_index(joystick);
     }
-    emscripten_async_run_in_main_runtime_thread(EM_FUNC_SIG_VIII, recompinput_web_rumble, p.name.c_str(), rank, int(strength));
+    if (p.index >= 0) {
+        emscripten_async_run_in_main_runtime_thread(EM_FUNC_SIG_VII, recompinput_web_rumble, p.index, int(strength));
+    }
     return 0;
 }
 #endif
