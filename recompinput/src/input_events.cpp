@@ -109,6 +109,9 @@ static void web_watch_pointer_lock() {
 }
 #endif
 
+// Set by the window's close, which SDL follows with an SDL_QUIT when it is the last window.
+static bool window_closed = false;
+
 bool sdl_event_filter(void* userdata, SDL_Event* event) {
     switch (event->type) {
     case SDL_EventType::SDL_KEYDOWN:
@@ -182,8 +185,19 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         recompinput::remove_controller_state(controller_event->which);
     }
     break;
+    case SDL_EventType::SDL_WINDOWEVENT:
+        if (event->window.event == SDL_WINDOWEVENT_CLOSE) {
+            window_closed = true;
+        }
+        queue_if_enabled(event);
+        break;
     case SDL_EventType::SDL_QUIT: {
-        if (!ultramodern::is_game_started()) {
+        // A window closed by its player asks first. SDL sends SDL_QUIT with no window close before it for SIGTERM and
+        // SIGINT too (a session logging out, a service manager, a terminal's Ctrl+C, timeout), and there nobody can
+        // answer the prompt, so the program would never end: that quits at once.
+        bool asked_by_player = window_closed;
+        window_closed = false;
+        if (!ultramodern::is_game_started() || !asked_by_player) {
             ultramodern::quit();
             return true;
         }
