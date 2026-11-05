@@ -113,6 +113,10 @@ static void web_watch_pointer_lock() {
 static bool window_closed = false;
 
 bool sdl_event_filter(void* userdata, SDL_Event* event) {
+    // Before the switch, so each upstream's own handling of window events below stays as it is.
+    if (event->type == SDL_WINDOWEVENT && event->window.event == SDL_WINDOWEVENT_CLOSE) {
+        window_closed = true;
+    }
     switch (event->type) {
     case SDL_EventType::SDL_KEYDOWN:
     {
@@ -185,12 +189,6 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
         recompinput::remove_controller_state(controller_event->which);
     }
     break;
-    case SDL_EventType::SDL_WINDOWEVENT:
-        if (event->window.event == SDL_WINDOWEVENT_CLOSE) {
-            window_closed = true;
-        }
-        queue_if_enabled(event);
-        break;
     case SDL_EventType::SDL_QUIT: {
         // A window closed by its player asks first. SDL sends SDL_QUIT with no window close before it for SIGTERM and
         // SIGINT too (a session logging out, a service manager, a terminal's Ctrl+C, timeout), and there nobody can
