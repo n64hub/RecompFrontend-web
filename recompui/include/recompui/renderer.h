@@ -29,6 +29,10 @@ namespace recompui {
             void send_dl(const OSTask *task) override;
             void send_dummy_workload(uint32_t fb_address) override;
             void update_screen() override;
+#ifdef __EMSCRIPTEN__
+            // RT64 builds what the game's boot draws with before the game starts (RT64::Application::prepareForGame()).
+            void prepare_for_game() override;
+#endif
             void shutdown() override;
             uint32_t get_display_framerate() const override;
             float get_resolution_scale() const override;

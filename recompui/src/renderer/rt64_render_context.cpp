@@ -401,6 +401,12 @@ void renderer::RT64Context::update_screen() {
     app->updateScreen();
 }
 
+#ifdef __EMSCRIPTEN__
+void renderer::RT64Context::prepare_for_game() {
+    app->prepareForGame();
+}
+#endif
+
 void renderer::RT64Context::shutdown() {
     if (app != nullptr) {
         app->end();
