@@ -148,10 +148,12 @@ extern "C" char *SDL_CreateJoystickName(Uint16 vendor, Uint16 product, const cha
 // isn't the gamepad's id: the id comes through Emscripten's EmscriptenGamepadEvent cut to 63 bytes, which Chrome's ids
 // for other than XInput pads run past ("DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)"),
 // and SDL renames it (a maker's name shortened, "HORI CO.,LTD" to "HORI", or cut off the front when it shows again
-// later). So each gamepad's id as Emscripten gives it is named the way SDL named the joystick, and the gamepad is the
-// k-th of that name in the browser's order, for the k-th joystick of the name in the order SDL saw them connect
-// (instance id).
-static int web_gamepad_index(SDL_Joystick* joystick) {
+// later). So each gamepad's id as Emscripten gives it is named the way SDL named the joystick, and among the gamepads
+// of that name no connected joystick has found yet (claimed, by browser index), the joystick is the k-th, for the k-th
+// of the name among the joysticks that haven't found theirs, in the order SDL saw them connect (instance id). Taken
+// over every gamepad, a pad plugged in again (a new, higher instance id) at a lower browser index than an older pad of
+// its name found the older one's gamepad, and both players' rumble went to one pad.
+static int web_gamepad_index(SDL_Joystick* joystick, const std::unordered_map<SDL_JoystickID, int>& claimed) {
     const char *name = SDL_JoystickName(joystick);
     SDL_JoystickID id = SDL_JoystickInstanceID(joystick);
     if (name == nullptr) {
@@ -163,11 +165,19 @@ static int web_gamepad_index(SDL_Joystick* joystick) {
     int rank = 0;
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
         const char *other = SDL_JoystickNameForIndex(i);
-        rank += SDL_JoystickGetDeviceInstanceID(i) < id && other != nullptr && strcmp(other, name) == 0;
+        SDL_JoystickID other_id = SDL_JoystickGetDeviceInstanceID(i);
+        rank += other_id < id && !claimed.contains(other_id) && other != nullptr && strcmp(other, name) == 0;
     }
     EmscriptenGamepadEvent pad;
     for (int i = 0; i < emscripten_get_num_gamepads(); i++) {
         if (emscripten_get_gamepad_status(i, &pad) != EMSCRIPTEN_RESULT_SUCCESS) {
+            continue;
+        }
+        bool taken = false;
+        for (const auto& [other_id, index] : claimed) {
+            taken |= other_id != id && index == i;
+        }
+        if (taken) {
             continue;
         }
         char *pad_name = SDL_CreateJoystickName(0, 0, nullptr, pad.id);
@@ -200,7 +210,15 @@ static int web_rumble(SDL_Joystick* joystick, uint16_t strength) {
     p.strength = strength;
     p.at = now;
     if (p.index < 0) {
-        p.index = web_gamepad_index(joystick);
+        // The gamepads found by the joysticks still connected: one pulled out leaves its gamepad to the next.
+        std::unordered_map<SDL_JoystickID, int> claimed;
+        for (int i = 0; i < SDL_NumJoysticks(); i++) {
+            auto found = played.find(SDL_JoystickGetDeviceInstanceID(i));
+            if (found != played.end() && found->first != id && found->second.index >= 0) {
+                claimed[found->first] = found->second.index;
+            }
+        }
+        p.index = web_gamepad_index(joystick, claimed);
     }
     if (p.index >= 0) {
         emscripten_async_run_in_main_runtime_thread(EM_FUNC_SIG_VII, recompinput_web_rumble, p.index, int(strength));
