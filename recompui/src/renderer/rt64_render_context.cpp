@@ -63,9 +63,9 @@ unsigned int DPC_TMEM_REG = 0;
 void dummy_check_interrupts() {}
 
 #if defined(__EMSCRIPTEN__)
-// With render to RAM's late copy, RT64 tells the game the RDP is done before it records and submits a list's workload,
-// so the game goes on meanwhile (ultramodern::renderer::rdp_done), once a game's task: never for a list RT64 draws by
-// itself (a pipeline warm-up, a dummy workload).
+// With render to RAM off or its late copy, RT64 tells the game the RDP is done before it records and submits a list's
+// workload, so the game goes on meanwhile (ultramodern::renderer::rdp_done), once a game's task: never for a list RT64
+// draws by itself (a pipeline warm-up, a dummy workload).
 static bool sending_game_dl = false;
 
 static void rdp_done() {
