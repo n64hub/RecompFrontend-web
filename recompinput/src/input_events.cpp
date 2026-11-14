@@ -162,6 +162,7 @@ bool sdl_event_filter(void* userdata, SDL_Event* event) {
                 SDL_GameControllerSetSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_GYRO, SDL_TRUE);
                 SDL_GameControllerSetSensorEnabled(controller, SDL_SensorType::SDL_SENSOR_ACCEL, SDL_TRUE);
             }
+            players::reconnect_player_controller(controller);
         }
         
         ControllerGUID guid = profiles::get_guid_from_sdl_controller(controller);

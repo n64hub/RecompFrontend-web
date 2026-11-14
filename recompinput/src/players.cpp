@@ -121,6 +121,34 @@ bool players::has_enough_players_assigned() {
     return PlayerState.players.get_count() >= PlayerState.min_players;
 }
 
+// RECOMPINPUT_RECONNECT_PLAYERS: a controller that comes back (a cable pulled and plugged in again, a wireless pad's
+// drop) is a new SDL controller with a new instance id, while its player still held the one that went, which reads
+// nothing once it is detached: that player had no input until players were assigned again. The player whose
+// controller is detached and of the same identity as the one that came back (the hash its profile is kept under) gets
+// the new one, among the assigned players and those being assigned. Two pads of one model are one identity (a browser
+// gives no serial), so either one plugged in again goes to the first such player.
+void players::reconnect_player_controller(SDL_GameController* controller) {
+#ifdef RECOMPINPUT_RECONNECT_PLAYERS
+    uint64_t hash = profiles::get_guid_from_sdl_controller(controller).hash;
+    for (PlayerArray* player_array : { &PlayerState.players, &PlayerState.temp_players }) {
+        for (size_t i = 0; i < player_array->get_count(); i++) {
+            Player& player = (*player_array)[i];
+            if (player.controller != nullptr && player.controller != controller &&
+                !SDL_GameControllerGetAttached(player.controller) &&
+                profiles::get_guid_from_sdl_controller(player.controller).hash == hash) {
+                if (player_array == &PlayerState.players) {
+                    printf("  Back as player %zu's controller\n", i + 1);
+                }
+                player.controller = controller;
+                break;
+            }
+        }
+    }
+#else
+    (void)controller;
+#endif
+}
+
 InputDevice players::get_player_input_device(int player_index, bool temp_player) {
     auto player_array = PlayerState.get_player_array(temp_player);
     if (!player_array.player_is_assigned(player_index)) {

@@ -15,6 +15,9 @@ namespace recompinput {
     };
 
     namespace players {
+        // With RECOMPINPUT_RECONNECT_PLAYERS, from SDL_CONTROLLERDEVICEADDED: a controller plugged in again goes back
+        // to the player who had it (players.cpp).
+        void reconnect_player_controller(SDL_GameController* controller);
         size_t get_number_of_assigned_players();
         size_t get_max_number_of_players();
         bool is_single_player_mode();

@@ -79,3 +79,11 @@ option(RECOMPINPUT_PADS_IN_ORDER "A multiplayer game plays each controller as a 
 if (RECOMPINPUT_PADS_IN_ORDER)
     target_compile_definitions(recompinput PRIVATE RECOMPINPUT_SINGLE_PLAYER_UNTIL_ASSIGNED=1 RECOMPINPUT_PADS_IN_ORDER=1)
 endif()
+
+# A controller pulled out and plugged in again goes back to the player who had it (src/players.cpp,
+# reconnect_player_controller), where upstream's player kept the controller that went and had no input until players
+# were assigned again. On with Emscripten and with RECOMPINPUT_PADS_IN_ORDER.
+option(RECOMPINPUT_RECONNECT_PLAYERS "A controller plugged in again goes back to the player who had it (always on with Emscripten and RECOMPINPUT_PADS_IN_ORDER)" OFF)
+if (RECOMPINPUT_RECONNECT_PLAYERS OR RECOMPINPUT_PADS_IN_ORDER OR EMSCRIPTEN)
+    target_compile_definitions(recompinput PRIVATE RECOMPINPUT_RECONNECT_PLAYERS=1)
+endif()
