@@ -21,6 +21,8 @@ static struct {
     std::atomic_int32_t mouse_wheel_pos = 0;
     std::mutex controllers_mutex;
     std::vector<SDL_GameController*> detected_controllers{};
+    // RECOMPINPUT_PADS_IN_ORDER's controller of each port, nullptr where none is (controller_for_port).
+    std::vector<SDL_GameController*> port_controllers{};
     std::unordered_map<SDL_JoystickID, ControllerState> controller_states;
 
     std::array<float, 2> mouse_delta{};
@@ -33,15 +35,19 @@ static struct {
 
 #ifdef RECOMPINPUT_PADS_IN_ORDER
 // RECOMPINPUT_PADS_IN_ORDER, for a game of several players: until players are assigned, each controller plays a port of
-// its own, in the order they were connected (poll_inputs), where single-player mode gives every controller to every
-// port, so a second pad moved player 1 too and a menu that each player works with a pad of their own (a character
-// select) had every cursor move at once. Its buttons, sticks, gyro and rumble are that port's alone; the keyboard plays
-// port 1 (profiles.cpp). Assigned players play as before. The caller holds controllers_mutex.
+// its own, where single-player mode gives every controller to every port, so a second pad moved player 1 too and a menu
+// that each player works with a pad of their own (a character select) had every cursor move at once. Its buttons,
+// sticks, gyro and rumble are that port's alone; the keyboard plays port 1 (profiles.cpp). Assigned players play as
+// before. A controller takes its port as it connects, the lowest one no connected controller holds, and keeps it while
+// it is connected (add_controller_state), as a console's pad stays in its socket: the order they were connected in, a
+// pad pulled out leaves its port empty, and one plugged in again takes it back. They were ports in the order of SDL's
+// instance ids, which rise with each connection, so a pad plugged in again went last and every pad after its old port
+// moved up one. The caller holds controllers_mutex.
 static SDL_GameController* controller_for_port(int controller_num) {
-    if (controller_num < 0 || (size_t)controller_num >= InputState.detected_controllers.size()) {
+    if (controller_num < 0 || (size_t)controller_num >= InputState.port_controllers.size()) {
         return nullptr;
     }
-    return InputState.detected_controllers[controller_num];
+    return InputState.port_controllers[controller_num];
 }
 #endif
 
@@ -54,7 +60,12 @@ size_t recompinput::get_detected_controller_count() {
     for (const auto& [id, state] : InputState.controller_states) {
         (void)id;
         if (state.controller != nullptr) {
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+            // Up to the highest port held: a pad that plays port 3 while port 2's is pulled out still plays.
+            count = std::max(count, (size_t)(state.port + 1));
+#else
             count++;
+#endif
         }
     }
     return count;
@@ -81,12 +92,16 @@ void recompinput::poll_inputs() {
             }
         }
 #ifdef RECOMPINPUT_PADS_IN_ORDER
-        // In the order they were connected: SDL's joystick instance ids rise with each connection.
-        std::sort(InputState.detected_controllers.begin(), InputState.detected_controllers.end(),
-            [](SDL_GameController* a, SDL_GameController* b) {
-                return SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(a)) <
-                    SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(b));
-            });
+        InputState.port_controllers.clear();
+        for (const auto& [id, state] : InputState.controller_states) {
+            (void)id;
+            if (state.controller != nullptr && state.port >= 0) {
+                if ((size_t)state.port >= InputState.port_controllers.size()) {
+                    InputState.port_controllers.resize(state.port + 1, nullptr);
+                }
+                InputState.port_controllers[state.port] = state.controller;
+            }
+        }
 #endif
     }
 
@@ -550,6 +565,24 @@ SDL_GameController *recompinput::get_controller_from_joystick_id(SDL_JoystickID 
 void recompinput::add_controller_state(SDL_JoystickID joystick_id, SDL_GameController* controller) {
     std::lock_guard lock{ InputState.controllers_mutex };
     ControllerState& state = InputState.controller_states[SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))];
+#ifdef RECOMPINPUT_PADS_IN_ORDER
+    // The lowest port no connected controller holds (controller_for_port).
+    if (state.controller == nullptr) {
+        state.port = 0;
+        for (bool taken = true; taken; ) {
+            taken = false;
+            for (const auto& [id, other] : InputState.controller_states) {
+                (void)id;
+                if (&other != &state && other.controller != nullptr && other.port == state.port) {
+                    taken = true;
+                    state.port++;
+                    break;
+                }
+            }
+        }
+        printf("  Port: %d\n", state.port + 1);
+    }
+#endif
     state.controller = controller;
 }
 

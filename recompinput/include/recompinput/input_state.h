@@ -20,17 +20,21 @@ namespace recompinput {
         std::array<float, 2> rotation_delta{};
         std::array<float, 2> pending_rotation_delta{};
         bool rumble_failed;
+        // With RECOMPINPUT_PADS_IN_ORDER, the port it plays until players are assigned (input_state.cpp,
+        // add_controller_state), -1 for none.
+        int port;
 
-        ControllerState() : controller{}, latest_accelerometer{}, motion{}, prev_gyro_timestamp{}, rotation_delta{}, pending_rotation_delta{}, rumble_failed{} {
+        ControllerState() : controller{}, latest_accelerometer{}, motion{}, prev_gyro_timestamp{}, rotation_delta{}, pending_rotation_delta{}, rumble_failed{}, port{ -1 } {
             motion.Reset();
             motion.SetCalibrationMode(GamepadMotionHelpers::CalibrationMode::Stillness | GamepadMotionHelpers::CalibrationMode::SensorFusion);
         };
     };
 
     void poll_inputs();
-    // How many controllers are connected. With RECOMPINPUT_PADS_IN_ORDER, until players are assigned, the first plays
-    // port 1, the second port 2 and so on (input_state.cpp): a game's get_connected_device_info tells it those ports
-    // and port 1, the keyboard's, have a controller.
+    // How many controllers are connected. With RECOMPINPUT_PADS_IN_ORDER, until players are assigned, each plays a port
+    // of its own, kept while it is connected, the first port 1, the second port 2 and so on (input_state.cpp): the
+    // count is then up to the highest port a controller holds, so a game's get_connected_device_info tells it those
+    // ports and port 1, the keyboard's, have a controller, a port left by a pad pulled out included.
     size_t get_detected_controller_count();
     void set_rumble(int controller_num, bool on);
     void update_rumble();
