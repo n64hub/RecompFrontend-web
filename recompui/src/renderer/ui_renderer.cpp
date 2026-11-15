@@ -112,6 +112,10 @@ class RmlRenderInterface_RT64_impl : public Rml::RenderInterfaceCompatibility {
         uint32_t bytes_used_ = 0;
         uint8_t* mapped_data_ = nullptr;
         plume::RenderBufferFlags flags_ = plume::RenderBufferFlag::NONE;
+        // Where the buffer of a lost device mapped to nothing, what the menus write until RT64 replaces the device
+        // (replace_device()) goes here instead.
+        std::vector<uint8_t> lost_data_{};
+        bool mapped_lost_ = false;
     };
 
     static constexpr uint32_t per_frame_descriptor_set = 0;
@@ -185,10 +189,9 @@ public:
         create_device_objects(interface, device);
     }
 
-#ifdef __EMSCRIPTEN__
-    // Where RT64 replaces a lost WebGPU device (its replace device hook): destroys everything made on the old device,
-    // RmlUi's textures included, which it loads again as it next draws with them, and keeps the rest (the images
-    // queued from bytes, the documents).
+    // Where RT64 replaces a lost device (its replace device hook): destroys everything made on the old device, RmlUi's
+    // textures included, which it loads again as it next draws with them, and keeps the rest (the images queued from
+    // bytes, the documents).
     void release_device_objects() {
         Rml::ReleaseTextures(GetAdaptedInterface());
         textures_.clear();
@@ -197,6 +200,7 @@ public:
             dynamic_buffer->size_ = 0;
             dynamic_buffer->bytes_used_ = 0;
             dynamic_buffer->mapped_data_ = nullptr;
+            dynamic_buffer->mapped_lost_ = false;
         }
 
         stale_buffers_.clear();
@@ -226,7 +230,6 @@ public:
         interface_ = nullptr;
         device_ = nullptr;
     }
-#endif
 
     void create_device_objects(plume::RenderInterface* interface, plume::RenderDevice* device) {
         interface_ = interface;
@@ -337,11 +340,13 @@ public:
             screen_vertex_buffer_size_ = sizeof(Rml::Vertex) * 3;
             screen_vertex_buffer_ = device_->createBuffer(plume::RenderBufferDesc::VertexBuffer(screen_vertex_buffer_size_, plume::RenderHeapType::UPLOAD));
             Rml::Vertex *vertices = (Rml::Vertex *)(screen_vertex_buffer_->map());
-            const Rml::ColourbPremultiplied white(255, 255, 255, 255);
-            vertices[0] = Rml::Vertex{ Rml::Vector2f(-1.0f, 1.0f), white, Rml::Vector2f(0.0f, 0.0f) };
-            vertices[1] = Rml::Vertex{ Rml::Vector2f(-1.0f, -3.0f), white, Rml::Vector2f(0.0f, 2.0f) };
-            vertices[2] = Rml::Vertex{ Rml::Vector2f(3.0f, 1.0f), white, Rml::Vector2f(2.0f, 0.0f) };
-            screen_vertex_buffer_->unmap();
+            if (vertices != nullptr) {
+                const Rml::ColourbPremultiplied white(255, 255, 255, 255);
+                vertices[0] = Rml::Vertex{ Rml::Vector2f(-1.0f, 1.0f), white, Rml::Vector2f(0.0f, 0.0f) };
+                vertices[1] = Rml::Vertex{ Rml::Vector2f(-1.0f, -3.0f), white, Rml::Vector2f(0.0f, 2.0f) };
+                vertices[2] = Rml::Vertex{ Rml::Vector2f(3.0f, 1.0f), white, Rml::Vector2f(2.0f, 0.0f) };
+                screen_vertex_buffer_->unmap();
+            }
         }
 
         copy_command_queue_ = device->createCommandQueue(plume::RenderCommandListType::COPY);
@@ -362,22 +367,40 @@ public:
 #endif
     }
 
+    // A lost device's buffer maps to nothing: the menus write into lost_data_ until it is replaced.
+    static void map_dynamic_buffer(DynamicBuffer &dynamic_buffer) {
+        dynamic_buffer.mapped_data_ = reinterpret_cast<uint8_t*>(dynamic_buffer.buffer_->map());
+        dynamic_buffer.mapped_lost_ = (dynamic_buffer.mapped_data_ == nullptr);
+        if (dynamic_buffer.mapped_lost_) {
+            dynamic_buffer.lost_data_.resize(dynamic_buffer.size_);
+            dynamic_buffer.mapped_data_ = dynamic_buffer.lost_data_.data();
+        }
+    }
+
+    static void unmap_dynamic_buffer(DynamicBuffer &dynamic_buffer) {
+        if (!dynamic_buffer.mapped_lost_) {
+            unmap_written(dynamic_buffer.buffer_.get(), dynamic_buffer.bytes_used_);
+        }
+
+        dynamic_buffer.mapped_data_ = nullptr;
+        dynamic_buffer.mapped_lost_ = false;
+    }
+
     void reset_dynamic_buffer(DynamicBuffer &dynamic_buffer) {
         assert(dynamic_buffer.mapped_data_ == nullptr);
         dynamic_buffer.bytes_used_ = 0;
-        dynamic_buffer.mapped_data_ = reinterpret_cast<uint8_t*>(dynamic_buffer.buffer_->map());
+        map_dynamic_buffer(dynamic_buffer);
     }
 
     void end_dynamic_buffer(DynamicBuffer &dynamic_buffer) {
         assert(dynamic_buffer.mapped_data_ != nullptr);
-        unmap_written(dynamic_buffer.buffer_.get(), dynamic_buffer.bytes_used_);
-        dynamic_buffer.mapped_data_ = nullptr;
+        unmap_dynamic_buffer(dynamic_buffer);
     }
 
     void resize_dynamic_buffer(DynamicBuffer &dynamic_buffer, uint32_t new_size, bool map = true) {
         // Unmap the buffer if it's mapped
         if (dynamic_buffer.mapped_data_ != nullptr) {
-            unmap_written(dynamic_buffer.buffer_.get(), dynamic_buffer.bytes_used_);
+            unmap_dynamic_buffer(dynamic_buffer);
         }
         
         // If there's already a buffer, move it into the stale buffers so it persists until the start of next frame.
@@ -391,7 +414,7 @@ public:
         dynamic_buffer.bytes_used_ = 0;
 
         if (map) {
-            dynamic_buffer.mapped_data_ = reinterpret_cast<uint8_t*>(dynamic_buffer.buffer_->map());
+            map_dynamic_buffer(dynamic_buffer);
         }
     }
 
@@ -599,6 +622,12 @@ public:
 
                 // Copy the source data into the upload buffer.
                 uint8_t* dst_data = (uint8_t *)(copy_buffer_->map());
+
+                // A lost device's buffer maps to nothing: the image is loaded again once the device is replaced.
+                if (dst_data == nullptr) {
+                    break;
+                }
+
                 if ((row_byte_padding == 0) && !flip_y) {
                     // Directly copy if no padding is needed and the image isn't flipped.
                     memcpy(dst_data, source + row_pitch * first_row, row_pitch * rows);
@@ -775,7 +804,6 @@ void recompui::RmlRenderInterface_RT64::init(plume::RenderInterface* interface, 
     impl = std::make_unique<RmlRenderInterface_RT64_impl>(interface, device);
 }
 
-#ifdef __EMSCRIPTEN__
 void recompui::RmlRenderInterface_RT64::replace_device(plume::RenderInterface* interface, plume::RenderDevice* device) {
     assert(static_cast<bool>(impl));
 
@@ -786,7 +814,6 @@ void recompui::RmlRenderInterface_RT64::replace_device(plume::RenderInterface* i
         impl->create_device_objects(interface, device);
     }
 }
-#endif
 
 Rml::RenderInterface* recompui::RmlRenderInterface_RT64::get_rml_interface() {
     if (impl) {
