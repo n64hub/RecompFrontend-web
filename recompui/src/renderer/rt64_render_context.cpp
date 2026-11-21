@@ -22,6 +22,7 @@ static bool sample_positions_supported = false;
 static bool high_precision_fb_enabled = false;
 static bool render_to_ram = true;
 static bool render_to_ram_late = false;
+static bool render_to_ram_late_depth_only = false;
 
 static uint8_t DMEM[0x1000];
 static uint8_t IMEM[0x1000];
@@ -296,6 +297,7 @@ renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::Window
     app = std::make_unique<RT64::Application>(appCore, appConfig);
     app->emulatorConfig.framebuffer.renderToRAM = render_to_ram;
     app->emulatorConfig.framebuffer.renderToRAMLate = render_to_ram_late;
+    app->emulatorConfig.framebuffer.renderToRAMLateDepthOnly = render_to_ram_late_depth_only;
 
     // Set initial user config settings based on the current settings.
     auto& cur_config = ultramodern::renderer::get_graphics_config();
@@ -551,6 +553,10 @@ void renderer::set_render_to_ram(bool enabled) {
 
 void renderer::set_render_to_ram_late(bool late) {
     render_to_ram_late = late;
+}
+
+void renderer::set_render_to_ram_late_depth_only(bool depth_only) {
+    render_to_ram_late_depth_only = depth_only;
 }
 
 bool renderer::RT64SamplePositionsSupported() {

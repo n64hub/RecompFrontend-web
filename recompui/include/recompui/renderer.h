@@ -58,6 +58,11 @@ namespace recompui {
         // doesn't wait for it. A game whose CPU reads a frame it has just drawn reads the one before then.
         void set_render_to_ram_late(bool late);
 
+        // Whether that late copy brings only the framebuffers drawn as depth buffers (RT64's renderToRAMLateDepthOnly, off
+        // unless turned on), for a game whose CPU reads its depth but never its frames. In a browser each framebuffer
+        // copied is a readback of its own, and the colour ones cost a page with a large canvas the most.
+        void set_render_to_ram_late_depth_only(bool depth_only);
+
         RT64::UserConfiguration::Antialiasing RT64MaxMSAA();
         bool RT64SamplePositionsSupported();
         bool RT64HighPrecisionFBEnabled();
